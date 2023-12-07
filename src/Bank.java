@@ -17,7 +17,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 
-public class BankServer {
+public class Bank {
     private KeyPair keyPair;
     private static final String FILE_NAME = "password";
     private static final String publicKeyPath = "public_key.pem";
@@ -65,7 +65,7 @@ public class BankServer {
         return new KeyPair(publicKey, privateKey);
     }
 
-    public BankServer() {
+    public Bank() {
         try {
 
             this.keyPair = loadKeyPair(publicKeyPath, privateKeyPath);
@@ -200,7 +200,7 @@ public class BankServer {
                             String recipientId = (String) inputStream.readObject();
                             double amount = (double) inputStream.readObject();
 
-                            // Process the transfer and update the balance file
+                           
                             String response1 = processTransfer(accountChoice, recipientId, amount);
                             outputStream.writeObject(response1);
                             outputStream.flush();
@@ -242,7 +242,7 @@ public class BankServer {
         } catch (Exception ex) {
             System.err.println("Exception message: " + ex.getMessage());
         }
-        return new AccountDetails(Double.parseDouble(savings), Double.parseDouble(checking)); // Placeholder
+        return new AccountDetails(Double.parseDouble(savings), Double.parseDouble(checking));
     }
     private Map<String, AccountDetails> loadAccountDetails(String filePath) {
         Map<String, AccountDetails> detailsMap = new HashMap<>();
@@ -281,7 +281,7 @@ public class BankServer {
             }
 
 
-            // Write updated details directly back to the original file
+            
             writeUpdatedBalances(accountDetailsMap, BALANCE_FILE);
             response = "your transaction is successful";
         }
@@ -316,8 +316,18 @@ public class BankServer {
     }
 
     public static void main(String[] args) {
-        BankServer server = new BankServer();
-        server.startServer(12345);
+        if (args.length < 1) {
+            System.out.println("Usage: java Server <port number>");
+            return;
+        }
+
+        int port = Integer.parseInt(args[0]);
+        if (port < 1024 || port > 65535) {
+            System.out.println("The port number should be a user-defined number between 1024 and 65535");
+            System.exit(1);
+        }
+        Bank server = new Bank();
+        server.startServer(port);
     }
 }
 

@@ -11,7 +11,7 @@ import javax.crypto.SecretKey;
 import java.util.Scanner;
 import java.util.Base64;
 
-public class ATM {
+public class Atm {
     private PublicKey serverPublicKey;
     private SecretKey symmetricKey;
 
@@ -126,23 +126,23 @@ public class ATM {
         outputStream.writeObject(recipientId);
         outputStream.writeObject(amount);
 
-        // Make sure to flush the stream after sending data
+    
         outputStream.flush();
 
-        // Receive response from the server
+
         String serverResponse = (String) inputStream.readObject();
         System.out.println(serverResponse);
     }
     private void handleCheckBalance(Socket socket, ObjectOutputStream outputStream, ObjectInputStream inputStream, Scanner scanner) throws IOException, ClassNotFoundException {
-        // Send a request to the server to get account balances
-        outputStream.writeObject(2);  // '2' for checking balance
+       
+        outputStream.writeObject(2); 
         outputStream.flush();
 
-        // Read the response from the server
+      
         String savingsBalance = (String) inputStream.readObject();
         String checkingBalance = (String) inputStream.readObject();
 
-        // Display the balances
+      
         System.out.println("Your savings account balance: " + savingsBalance);
         System.out.println("Your checking account balance: " + checkingBalance);
     }
@@ -168,15 +168,31 @@ public class ATM {
                    break;
                default:
                    System.out.println("Invalid choice, please enter 1, 2, or 3.");
-                   displayMainMenu(socket, outputStream, inputStream, scanner); // Recursive call for invalid choices
+                   displayMainMenu(socket, outputStream, inputStream, scanner); 
            }
        }while (choice !=3);
     }
 
     public static void main(String[] args) {
         try {
-            ATM atm = new ATM();
-            atm.connectToBankServer("localhost", 12345);
+            if (args.length < 2) {
+                System.out.println("Usage: java Client <host> <port number>");
+                return;
+            }
+    
+            String host = args[0];
+            int port = Integer.parseInt(args[1]);
+            if (host.equals("localhost") || host.isEmpty()) {
+                System.out.println("The host name should not be localhost or empty");
+                System.exit(1);
+            }
+    
+            if (port < 1024 || port > 65535) {
+                System.out.println("The port number should be a user-defined number between 1024 and 65535");
+                System.exit(1);
+            }
+            Atm atm = new Atm();
+            atm.connectToBankServer(host, port);
         } catch (Exception e) {
             e.printStackTrace();
         }
