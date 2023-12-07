@@ -14,8 +14,10 @@ PrivateKey - RSA
 Whether your code was tested on remote.cs.binghamton.edu. - Yes it was tested on remote
 
 Steps to execute program
+0. Go to "cd src"
 1. Run "make compile"
 2. Run Bank.java on any port with command "make server" which will run "java Bank.java portnumber" which will start the server
+(Multiple ATM can connect to Bank Server)
 3. Run Atm.java with host name and port number that of the server "make client" which will take hostname and password from user "java Atm.java remote01-7.cs.binghamton.edu 8090"
 4. After that Atm and Bank are connected. the Atm will ask for ID and Password which will be encrypted with symmetric key which is generated after that symmetric key is encrypted with public key and send over server and similarly ID and Password are send with encrypted symmetric key.
 5. After sending username and password from the client side server will check in "password" file that if id and password match if yes it will return "correct id/password" and close connection

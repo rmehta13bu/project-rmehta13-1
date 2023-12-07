@@ -6,13 +6,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+
 import java.security.*;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
-import java.util.Arrays;
+
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
@@ -22,8 +22,6 @@ public class Bank {
     private static final String FILE_NAME = "password";
     private static final String publicKeyPath = "public_key.pem";
     private static final String privateKeyPath = "private_key.pem";
-
-    private String userId;
     private PublicKey publicKey;
     private PrivateKey privateKey;
 
@@ -74,8 +72,141 @@ public class Bank {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }  
+
+    public void startServer(int port) {
+        try (ServerSocket serverSocket = new ServerSocket(port)) {
+            System.out.println("Server started. Listening on port " + port);
+            while (true) {
+                try {
+                    Socket clientSocket = serverSocket.accept();
+                    System.out.println("Client connected: " + clientSocket.getInetAddress());
+                    new Thread(new ClientHandler(clientSocket, keyPair,FILE_NAME,"balance")).start();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
+    public static void main(String[] args) {
+        if (args.length < 1) {
+            System.out.println("Usage: java Server <port number>");
+            return;
+        }
+
+        int port = Integer.parseInt(args[0]);
+        if (port < 1024 || port > 65535) {
+            System.out.println("The port number should be a user-defined number between 1024 and 65535");
+            System.exit(1);
+        }
+        Bank server = new Bank();
+        server.startServer(port);
+    }
+}
+
+class ClientHandler implements Runnable {
+    private Socket clientSocket;
+    private KeyPair keyPair;
+    private String fileName;
+    private String balanceFile;
+    private String userId;
+
+    public ClientHandler(Socket clientSocket, KeyPair keyPair, String fileName, String balanceFile) {
+        this.clientSocket = clientSocket;
+        this.keyPair = keyPair;
+        this.fileName = fileName;
+        this.balanceFile = balanceFile;
+    }
+
+    @Override
+    public void run() {
+        try (ObjectInputStream inputStream = new ObjectInputStream(clientSocket.getInputStream());
+             ObjectOutputStream outputStream = new ObjectOutputStream(clientSocket.getOutputStream())) {
+
+            outputStream.writeObject(keyPair.getPublic());
+            outputStream.flush();
+            
+           
+            authenticateClient(inputStream, outputStream);
+
+            
+            handleClientRequests(inputStream, outputStream);
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            try {
+                clientSocket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private void authenticateClient(ObjectInputStream inputStream, ObjectOutputStream outputStream) throws Exception {
+        String id;
+        String password;
+        boolean credentialsValid = false;
+        do {
+            String encryptedKey = (String) inputStream.readObject();
+            String encryptedCredentials = (String) inputStream.readObject();
+
+            String decryptedSymmetricKey = decryptWithPrivateKey(encryptedKey);
+            SecretKey symmetricKey = new SecretKeySpec(Base64.getDecoder().decode(decryptedSymmetricKey), "AES");
+
+            String decryptedCredentials = decryptWithSymmetricKey(encryptedCredentials, symmetricKey);
+            String[] parts = decryptedCredentials.split("\\|\\|");
+            id = parts[0];
+            password = parts[1];
+
+            credentialsValid = validateCredentials(id, password);
+            userId = credentialsValid ? id : null;
+
+            String response = credentialsValid ? "ID and password are correct" : "ID or password is incorrect";
+            outputStream.writeObject(response);
+        } while (!credentialsValid);
+    }
+
+    private void handleClientRequests(ObjectInputStream inputStream, ObjectOutputStream outputStream) throws Exception {
+        while (true) {
+            int requestType = (int) inputStream.readObject();
+            switch (requestType) {
+                case 1:
+                    handleMoneyTransfer(inputStream, outputStream);
+                    break;
+                case 2:
+                    handleBalanceCheck(outputStream);
+                    break;
+                case 3:
+                    System.out.println("Closing connection with client.");
+                    return;
+                default:
+                    System.out.println("Invalid request type.");
+                    break;
+            }
+        }
+    }
+
+    private void handleMoneyTransfer(ObjectInputStream inputStream, ObjectOutputStream outputStream) throws Exception {
+        int accountChoice = (int) inputStream.readObject();
+        String recipientId = (String) inputStream.readObject();
+        double amount = (double) inputStream.readObject();
+
+        String response = processTransfer(accountChoice, recipientId, amount);
+        outputStream.writeObject(response);
+        outputStream.flush();
+    }
+
+    private void handleBalanceCheck(ObjectOutputStream outputStream) throws Exception {
+        AccountDetails userDetails = getAccountDetailsForUser(userId);
+        outputStream.writeObject(String.valueOf(userDetails.getSavingsBalance()));
+        outputStream.writeObject(String.valueOf(userDetails.getCheckingBalance()));
+        outputStream.flush();
+    }
+
+    
     private String decryptWithPrivateKey(String encryptedData) throws Exception {
         Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
         cipher.init(Cipher.DECRYPT_MODE, keyPair.getPrivate());
@@ -91,7 +222,7 @@ public class Bank {
     }
 
     private boolean validateCredentials(String id, String password) {
-        FileProcessor fileProcessor = new FileProcessor(FILE_NAME);
+        FileProcessor fileProcessor = new FileProcessor(fileName);
         boolean isValid = false;
 
         try {
@@ -100,131 +231,14 @@ public class Bank {
                 String[] parts = outputLine.split(" ", 2);
                 if (id.equals(parts[0]) && password.equals(parts[1])) {
                     isValid = true;
-                    this.userId=id;
                     break;
                 }
             }
         } catch (Exception ex) {
             System.err.println("Exception message: " + ex.getMessage());
         }
-
         return isValid;
     }
-
-    private boolean sufficientfunds(int accountChoice,double amount) {
-        FileProcessor fileProcessor = new FileProcessor("balance");
-        boolean isValid = false;
-
-        try {
-            String outputLine;
-            while ((outputLine = fileProcessor.readNextLineFromFile()) != null) {
-                String[] parts = outputLine.split(" ", 3);
-                if(accountChoice == 1){
-                    if(amount > Double.parseDouble(parts[1])){
-                        isValid = true;
-                        break;
-                    }
-
-                } else if (accountChoice==2) {
-                    if(amount > Double.parseDouble(parts[2])){
-                        isValid = true;
-                        break;
-                    }
-                }
-            }
-        } catch (Exception ex) {
-            System.err.println("Exception message: " + ex.getMessage());
-        }
-
-        return isValid;
-    }
-
-
-    private boolean validateIDCredentials(String id) {
-        FileProcessor fileProcessor = new FileProcessor(FILE_NAME);
-        boolean isValid = false;
-
-        try {
-            String outputLine;
-            while ((outputLine = fileProcessor.readNextLineFromFile()) != null) {
-                String[] parts = outputLine.split(" ", 2);
-                if (id.equals(parts[0])) {
-                    isValid = true;
-                    break;
-                }
-            }
-        } catch (Exception ex) {
-            System.err.println("Exception message: " + ex.getMessage());
-        }
-
-        return isValid;
-    }
-
-    private void handleClient(Socket clientSocket) {
-        try (ObjectInputStream inputStream = new ObjectInputStream(clientSocket.getInputStream());
-             ObjectOutputStream outputStream = new ObjectOutputStream(clientSocket.getOutputStream())) {
-
-            outputStream.writeObject(keyPair.getPublic());
-            outputStream.flush();
-            String id;
-            String password;
-            boolean credentialsValid = false;
-            do {
-
-                String encryptedKey = (String) inputStream.readObject();
-                String encryptedCredentials = (String) inputStream.readObject();
-
-                String decryptedSymmetricKey = decryptWithPrivateKey(encryptedKey);
-                SecretKey symmetricKey = new SecretKeySpec(Base64.getDecoder().decode(decryptedSymmetricKey), "AES");
-
-                String decryptedCredentials = decryptWithSymmetricKey(encryptedCredentials, symmetricKey);
-                String[] parts = decryptedCredentials.split("\\|\\|");
-                id = parts[0];
-                password = parts[1];
-                System.out.println(id);
-                System.out.println(password);
-
-                credentialsValid = validateCredentials(id, password);
-
-                String response = credentialsValid ? "ID and password are correct" : "ID or password is incorrect";
-                outputStream.writeObject(response);
-            } while (!credentialsValid);
-            if(credentialsValid){
-                while (true) {
-
-                    try {
-                        int requestType = (int) inputStream.readObject();
-                        System.out.println(requestType);
-                        if(requestType==1){
-                            int accountChoice = (int) inputStream.readObject();
-                            String recipientId = (String) inputStream.readObject();
-                            double amount = (double) inputStream.readObject();
-
-                           
-                            String response1 = processTransfer(accountChoice, recipientId, amount);
-                            outputStream.writeObject(response1);
-                            outputStream.flush();
-                        }else if(requestType==2){
-                            AccountDetails userDetails = getAccountDetailsForUser(userId);
-                            outputStream.writeObject(String.valueOf(userDetails.getSavingsBalance()));
-                            outputStream.writeObject(String.valueOf(userDetails.getCheckingBalance()));
-
-                        }else if (requestType == 3) {
-                            System.out.println("Closing connection with client.");
-                            break;
-                        }
-
-                    } catch (EOFException e) {
-                        System.out.println("Client disconnected");
-                        break;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
     private AccountDetails getAccountDetailsForUser(String userId) {
         FileProcessor fileProcessor = new FileProcessor("balance");
         String checking ="";
@@ -260,6 +274,53 @@ public class Bank {
         }
         return detailsMap;
     }
+    private boolean sufficientfunds(int accountChoice,double amount) {
+        FileProcessor fileProcessor = new FileProcessor("balance");
+        boolean isValid = false;
+
+        try {
+            String outputLine;
+            while ((outputLine = fileProcessor.readNextLineFromFile()) != null) {
+                String[] parts = outputLine.split(" ", 3);
+                if(accountChoice == 1){
+                    if(amount > Double.parseDouble(parts[1])){
+                        isValid = true;
+                        break;
+                    }
+
+                } else if (accountChoice==2) {
+                    if(amount > Double.parseDouble(parts[2])){
+                        isValid = true;
+                        break;
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            System.err.println("Exception message: " + ex.getMessage());
+        }
+
+        return isValid;
+    }
+
+     private boolean validateIDCredentials(String id) {
+        FileProcessor fileProcessor = new FileProcessor(fileName);
+        boolean isValid = false;
+
+        try {
+            String outputLine;
+            while ((outputLine = fileProcessor.readNextLineFromFile()) != null) {
+                String[] parts = outputLine.split(" ", 2);
+                if (id.equals(parts[0])) {
+                    isValid = true;
+                    break;
+                }
+            }
+        } catch (Exception ex) {
+            System.err.println("Exception message: " + ex.getMessage());
+        }
+
+        return isValid;
+    }
 
     private String processTransfer(int accountChoice, String recipientId, double amount) {
         String response = "";
@@ -287,6 +348,7 @@ public class Bank {
         }
         return response;
     }
+     
     private void writeUpdatedBalances(Map<String, AccountDetails> accountDetailsMap, String filePath) {
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(filePath, false))) {
             for (Map.Entry<String, AccountDetails> entry : accountDetailsMap.entrySet()) {
@@ -298,39 +360,8 @@ public class Bank {
             e.printStackTrace();
         }
     }
-
-    public void startServer(int port) {
-        try (ServerSocket serverSocket = new ServerSocket(port)) {
-            System.out.println("Server started. Listening on port " + port);
-            while (true) {
-                try (Socket clientSocket = serverSocket.accept()) {
-                    System.out.println("Client connected: " + clientSocket.getInetAddress());
-                    handleClient(clientSocket);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public static void main(String[] args) {
-        if (args.length < 1) {
-            System.out.println("Usage: java Server <port number>");
-            return;
-        }
-
-        int port = Integer.parseInt(args[0]);
-        if (port < 1024 || port > 65535) {
-            System.out.println("The port number should be a user-defined number between 1024 and 65535");
-            System.exit(1);
-        }
-        Bank server = new Bank();
-        server.startServer(port);
-    }
 }
-
+ 
 class FileProcessor {
     private BufferedReader reader;
 
